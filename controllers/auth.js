@@ -1,9 +1,11 @@
+const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");
 const xoauth2 = require("xoauth2");
 const sendgridTransport = require("nodemailer-sendgrid-transport");
 
 const User = require("../models/user");
+const user = require("../models/user");
 
 const transporter = nodemailer.createTransport({
 	service: "gmail",
@@ -114,7 +116,7 @@ exports.postSignup = (req, res, next) => {
 						let mailOptions = {
 							from: "Prady's Shop <pradyumnshukla26@gmail.com",
 							to: email.toString(),
-							subjext: "Thank You For Signing Up!",
+							subject: "Thank You For Signing Up!",
 							text: "Thank you very much for signing up to my Shop!",
 						};
 						return transporter.sendMail(mailOptions, (err, res) => {
@@ -132,6 +134,132 @@ exports.postSignup = (req, res, next) => {
 				// 	console.log(err);
 				// });
 			}
+		})
+		.catch((err) => {
+			console.log(err);
+		});
+};
+
+exports.getReset = (req, res, next) => {
+	let message = req.flash("error");
+	if (message.length > 0) {
+		message = message[0];
+	} else {
+		message = null;
+	}
+	res.render("auth/reset", {
+		path: "/reset",
+		pageTitle: "Reset Password",
+		errorMessage: message,
+	});
+};
+
+exports.postReset = (req, res, next) => {
+	crypto.randomBytes(32, (err, buffer) => {
+		if (err) {
+			console.log(err);
+			return res.redirect("/reset");
+		}
+		const token = buffer.toString("hex");
+		User.findOne({ email: req.body.email })
+			.then((user) => {
+				if (!user) {
+					req.flash("err", "No account with that email found");
+					return res.redirect("/reset");
+				}
+
+				user.resetToken = token;
+				user.resetTokenExpiration = Date.now() + 3600000;
+				user.save().then((result) => {
+					let mailOptions = {
+						from: "Prady's Shop <pradysshop@gmail.com>",
+						to: req.body.email.toString(),
+						subject: "Password Reset link",
+						html: `
+							<p> You requested a Password Reset, ignore this message if you did not.
+							<p> Click this <a href="http://localhost:3000/reset/${token}">link</a> to set a new password.</p>
+						`,
+					};
+					res.redirect("/");
+					return transporter.sendMail(mailOptions, (err, res) => {
+						if (err) {
+							console.log(err);
+						} else {
+							console.log("Email Sent!");
+						}
+					});
+				});
+			})
+			.catch((err) => {
+				console.log(err);
+			});
+	});
+};
+
+exports.getNewPassword = (req, res, next) => {
+	const token = req.params.token;
+	User.findOne({ resetToken: token, resetTokenExpiration: { $gt: Date.now() } })
+		.then((user) => {
+			console.log("Im here", user);
+			let message = req.flash("error");
+			if (message.length > 0) {
+				message = message[0];
+			} else {
+				message = null;
+			}
+			res.render("auth/new-password", {
+				path: "/new-password",
+				pageTitle: "Change Password",
+				errorMessage: message,
+				userId: user._id.toString(),
+				passwordToken: token,
+			});
+		})
+		.catch((err) => {
+			console.log(err);
+		});
+};
+
+exports.postNewPassword = (req, res, next) => {
+	const newPassword = req.body.password;
+	const userId = req.body.userId;
+	const passwordToken = req.body.passwordToken;
+	let resetUser;
+	let userEmail;
+	User.findOne({
+		resetToken: passwordToken,
+		resetTokenExpiration: { $gt: Date.now() },
+		_id: userId,
+	})
+		.then((user) => {
+			resetUser = user;
+			return bcrypt.hash(newPassword, 12);
+		})
+		.then((hashedPassword) => {
+			resetUser.password = hashedPassword;
+			resetUser.resetToken = undefined;
+			resetUser.resetTokenExpiration = undefined;
+			userEmail = resetUser.email;
+			return resetUser.save();
+		})
+		.then((result) => {
+			console.log("Hey, I am about to send mail");
+			let mailOptions = {
+				from: "Prady's Shop <pradysshop@gmail.com>",
+				to: userEmail,
+				subject: "Password Reset link",
+				html: `
+					<p>Your Password has been reset successfully. Try not forgetting the password of the most important website you've ever visited. IF YOU DID NOT WISH TO RESET YOUR PASSWORD CONTACT PRADY BOY RIGHT NOW </p>
+				`,
+			};
+			res.redirect("/login");
+			return transporter.sendMail(mailOptions, (err, res) => {
+				if (err) {
+					console.log(err);
+				} else {
+					console.log("Email Sent!");
+				}
+			});
 		})
 		.catch((err) => {
 			console.log(err);
